@@ -26,20 +26,52 @@ export type Talk = {
   incidentCount: number;
 };
 
+export type GuardianDeviceType = 'camera' | 'car' | 'smart_home';
+
+export type GuardianDevice = {
+  id: string;
+  type: GuardianDeviceType;
+  owner: string;
+  location: string;
+  consent: boolean;
+  consentTime: string;
+  status: 'watching' | 'revoked';
+};
+
+export type GuardianAlert = {
+  id: string;
+  deviceId: string;
+  deviceType: GuardianDeviceType;
+  location: string;
+  event: string;
+  createdAt: string;
+  message: string;
+};
+
 type GuardianContextValue = {
   incidents: Incident[];
   talks: Talk[];
   latestTalk: Talk;
+  devices: GuardianDevice[];
+  latestAlert: GuardianAlert | null;
   lockdown: boolean;
   hydrated: boolean;
   totalIncidents: number;
   generateTalk: () => Promise<Talk>;
   shareTalk: (talk: Talk) => Promise<void>;
+  addGuardianDevice: (
+    device: Omit<GuardianDevice, 'consent' | 'consentTime' | 'status'>,
+  ) => Promise<GuardianDevice>;
+  revokeGuardianDevice: (deviceId: string) => Promise<void>;
+  testGuardianAlarm: (deviceId: string, event: string) => Promise<GuardianAlert | null>;
+  shareGuardianAlert: (alert: GuardianAlert) => Promise<void>;
   toggleLockdown: () => Promise<void>;
 };
 
 const STORAGE_KEY = '@angel-michael/talks';
 const LOCKDOWN_KEY = '@angel-michael/lockdown';
+const DEVICES_KEY = '@angel-michael/guardian-devices';
+const ALERTS_KEY = '@angel-michael/guardian-alerts';
 
 const incidentSeed: Incident[] = [
   {
@@ -119,21 +151,33 @@ function makeTalk(incidentCount: number): Talk {
 
 export function GuardianProvider({ children }: { children: React.ReactNode }) {
   const [talks, setTalks] = useState<Talk[]>([initialTalk]);
+  const [devices, setDevices] = useState<GuardianDevice[]>([]);
+  const [alerts, setAlerts] = useState<GuardianAlert[]>([]);
   const [lockdown, setLockdown] = useState<boolean>(false);
   const [hydrated, setHydrated] = useState<boolean>(false);
 
   useEffect(() => {
     async function restore() {
       try {
-        const [savedTalks, savedLockdown] = await Promise.all([
+        const [savedTalks, savedLockdown, savedDevices, savedAlerts] = await Promise.all([
           AsyncStorage.getItem(STORAGE_KEY),
           AsyncStorage.getItem(LOCKDOWN_KEY),
+          AsyncStorage.getItem(DEVICES_KEY),
+          AsyncStorage.getItem(ALERTS_KEY),
         ]);
         if (savedTalks) {
           const parsed = JSON.parse(savedTalks) as Talk[];
           if (Array.isArray(parsed) && parsed.length > 0) setTalks(parsed);
         }
         if (savedLockdown !== null) setLockdown(savedLockdown === 'true');
+        if (savedDevices) {
+          const parsed = JSON.parse(savedDevices) as GuardianDevice[];
+          if (Array.isArray(parsed)) setDevices(parsed);
+        }
+        if (savedAlerts) {
+          const parsed = JSON.parse(savedAlerts) as GuardianAlert[];
+          if (Array.isArray(parsed)) setAlerts(parsed);
+        }
       } finally {
         setHydrated(true);
       }
@@ -156,6 +200,54 @@ export function GuardianProvider({ children }: { children: React.ReactNode }) {
     await Share.share({ message: talk.body, title: talk.title });
   };
 
+  const addGuardianDevice = async (
+    device: Omit<GuardianDevice, 'consent' | 'consentTime' | 'status'>,
+  ) => {
+    const nextDevice: GuardianDevice = {
+      ...device,
+      consent: true,
+      consentTime: new Date().toISOString(),
+      status: 'watching',
+    };
+    const nextDevices = [nextDevice, ...devices.filter((item) => item.id !== device.id)];
+    setDevices(nextDevices);
+    await AsyncStorage.setItem(DEVICES_KEY, JSON.stringify(nextDevices));
+    return nextDevice;
+  };
+
+  const revokeGuardianDevice = async (deviceId: string) => {
+    const nextDevices = devices.map((device) =>
+      device.id === deviceId ? { ...device, consent: false, status: 'revoked' as const } : device,
+    );
+    setDevices(nextDevices);
+    await AsyncStorage.setItem(DEVICES_KEY, JSON.stringify(nextDevices));
+  };
+
+  const testGuardianAlarm = async (deviceId: string, event: string) => {
+    if (lockdown) return null;
+    const device = devices.find((item) => item.id === deviceId);
+    if (!device || !device.consent) return null;
+    const createdAt = new Date().toISOString();
+    const alert: GuardianAlert = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      deviceId: device.id,
+      deviceType: device.type,
+      location: device.location,
+      event,
+      createdAt,
+      message: `Angel Michael Guardian Alert\n\nDevice: ${device.type} (${device.id})\nLocation: ${device.location || 'Not provided'}\nEvent: ${event}\n\nAction: NONE — Michael only informs you. Reply STOP to revoke.\nTime: ${new Date(createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
+    };
+    const nextAlerts = [alert, ...alerts].slice(0, 20);
+    setAlerts(nextAlerts);
+    await AsyncStorage.setItem(ALERTS_KEY, JSON.stringify(nextAlerts));
+    return alert;
+  };
+
+  const shareGuardianAlert = async (alert: GuardianAlert) => {
+    const { Share } = await import('react-native');
+    await Share.share({ message: alert.message, title: 'Angel Michael Guardian Alert' });
+  };
+
   const toggleLockdown = async () => {
     const next = !lockdown;
     setLockdown(next);
@@ -167,14 +259,20 @@ export function GuardianProvider({ children }: { children: React.ReactNode }) {
       incidents: incidentSeed,
       talks,
       latestTalk: talks[0] ?? initialTalk,
+      devices,
+      latestAlert: alerts[0] ?? null,
       lockdown,
       hydrated,
       totalIncidents,
       generateTalk,
       shareTalk,
+      addGuardianDevice,
+      revokeGuardianDevice,
+      testGuardianAlarm,
+      shareGuardianAlert,
       toggleLockdown,
     }),
-    [talks, lockdown, hydrated, totalIncidents],
+    [talks, devices, alerts, lockdown, hydrated, totalIncidents],
   );
 
   return <GuardianContext.Provider value={value}>{children}</GuardianContext.Provider>;

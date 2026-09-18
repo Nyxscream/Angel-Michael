@@ -33,6 +33,12 @@ function NativeTabLayout() {
         />
         <NativeTabs.Trigger.Label>Principles</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="guardian">
+        <NativeTabs.Trigger.Icon
+          sf={{ default: 'eye', selected: 'eye.fill' }}
+        />
+        <NativeTabs.Trigger.Label>Guardian</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
     </NativeTabs>
   );
 }
@@ -108,6 +114,18 @@ function ClassicTabLayout() {
               <SymbolView name="shield" tintColor={color} size={24} />
             ) : (
               <Feather name="shield" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="guardian"
+        options={{
+          title: 'Guardian',
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="eye" tintColor={color} size={24} />
+            ) : (
+              <Feather name="eye" size={22} color={color} />
             ),
         }}
       />
